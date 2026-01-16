@@ -1,0 +1,42 @@
+# training/configs/backbones.yaml
+
+backbones:
+  - name: resnet18
+    library: torchvision
+    type: cnn
+    input_channels: "auto"
+    pretrained: true
+    out_channels: 512
+    notes: "Baseline ResNet-18 — robust classic CNN backbone."
+
+  - name: efficientnet_b0
+    library: torchvision
+    type: cnn
+    input_channels: "auto"
+    pretrained: true
+    out_channels: 1280
+    notes: "EfficientNet-B0 — efficient and balanced."
+
+  - name: mobilenet_v3_small
+    library: torchvision
+    type: cnn
+    input_channels: "auto"
+    pretrained: true
+    out_channels: 576
+    notes: "MobileNetV3 Small — lightweight backbone."
+
+  - name: convnext_tiny
+    library: torchvision
+    type: cnn
+    input_channels: "auto"
+    pretrained: true
+    out_channels: 768
+    notes: "ConvNeXt Tiny from torchvision."
+
+  - name: swin_tiny_patch4_window7_224
+    library: timm
+    type: transformer
+    input_channels: "auto"
+    pretrained: true
+    out_channels: 768
+    notes: "Swin Transformer Tiny — unified output shape after channel-last → channel-first."

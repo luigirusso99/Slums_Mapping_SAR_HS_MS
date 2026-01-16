@@ -1,0 +1,82 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.env
+.venv
+venv/
+env/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# OS / Editor
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Logs & outputs
+# =========================
+*.log
+*.out
+*.tmp
+
+# =========================
+# Machine learning
+# =========================
+training/checkpoints/
+training/logs/
+inference/outputs/
+*.pt
+*.pth
+*.ckpt
+
+# =========================
+# Dataset (VERY IMPORTANT)
+# =========================
+dataset/patches_planet/
+dataset/patches_sar/
+dataset/patches_prisma/
+dataset/slum_labels_common.tif
+dataset/*.csv
+
+# =========================
+# Raster & EO data
+# =========================
+*.tif
+*.tiff
+*.vrt
+*.img
+*.hdr
+*.npz
+*.npy
+*.csv
+
+# =========================
+# Large raw data
+# =========================
+raw_data/
+data/
+downloads/
+
+# =========================
+# Credentials / tokens
+# =========================
+*.key
+*.pem
+*.env

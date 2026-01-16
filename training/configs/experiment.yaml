@@ -1,0 +1,58 @@
+# ===============================
+# TRAINING SETTINGS
+# ===============================
+num_folds: 4
+batch_size: 32
+epochs_per_fold: 1
+
+# ===============================
+# OPTIMIZER SETTINGS
+# ===============================
+optimizer:
+  type: adamw      # adam | adamw | sgd
+  lr: 1e-4
+  weight_decay: 1e-4
+
+# ===============================
+# DATA SETTINGS
+# ===============================
+data:
+  metadata_csv: "dataset/metadata.csv"
+  folds_csv: "dataset/folds.csv"
+  normalization_stats_csv: "dataset/normalization_stats.csv"
+
+  mode: sar        # sar | planet | fusion --> if fusion, both inputs are used, else single-input model
+  augment: True       # geometric physically meaningful augmentations
+  normalize: true     # Z-score based on stats CSV
+
+  sar_channels: 1
+  planet_channels: 8
+
+# ===============================
+# MODEL SETTINGS
+# ===============================
+model:
+  fusion_type: none       # early | mid | late or none for single-input models
+
+  # Backbone choices (from training/configs/backbones.yaml)
+  backbone_sar: resnet18
+  backbone_planet: resnet18
+
+  num_classes: 1
+  fusion_dim: 512
+  dropout: 0.2
+
+# ===============================
+# LOGGING, SAVING, CHECKPOINTS
+# ===============================
+save_dir: "training/checkpoints/" # path to save model checkpoints and metrics
+inference_save_dir: "inference/predictions/" # path to save inference predictions
+save_every: 1            # save every N epochs
+eval_every: 1            # evaluate every N epochs
+
+# ===============================
+# PATCH GEOMETRY
+# ===============================
+patch:
+  size: 224
+  stride: 179
