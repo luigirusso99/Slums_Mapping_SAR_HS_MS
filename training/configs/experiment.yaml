@@ -3,7 +3,7 @@
 # ===============================
 num_folds: 4
 batch_size: 32
-epochs_per_fold: 30
+epochs_per_fold: 25
 
 # ===============================
 # OPTIMIZER SETTINGS
