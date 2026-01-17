@@ -43,10 +43,17 @@ def run_fold(fold_id, cfg_path):
     # =====================
     # Dataset
     # =====================
+    # ---------------------
+    # Cross-validation folds
+    # ---------------------
+    all_folds = list(range(1, cfg["num_folds"] + 1))
+    folds_train = [f for f in all_folds if f != fold_id]
+    folds_val = [fold_id]
+
     train_ds = SlumDataset(
         metadata_csv=data_cfg["metadata_csv"],
         folds_csv=data_cfg["folds_csv"],
-        folds_to_use=[fold_id],
+        folds_to_use=folds_train,
         fusion_type=model_cfg["fusion_type"],
         sensor_type=model_cfg.get("sensor_type"),
         normalize=data_cfg.get("normalize", True),
@@ -59,7 +66,7 @@ def run_fold(fold_id, cfg_path):
     val_ds = SlumDataset(
         metadata_csv=data_cfg["metadata_csv"],
         folds_csv=data_cfg["folds_csv"],
-        folds_to_use=[fold_id],
+        folds_to_use=folds_val,
         fusion_type=model_cfg["fusion_type"],
         sensor_type=model_cfg.get("sensor_type"),
         normalize=data_cfg.get("normalize", True),
@@ -113,13 +120,20 @@ def run_fold(fold_id, cfg_path):
     # --------------------
     # Checkpoint directory
     # --------------------
-    checkpoint_dir = os.path.join(
+    path_parts = [
         cfg["save_dir"],
         fusion,
-        sensor,
+    ]
+
+    if fusion == "single":
+        path_parts.append(sensor)
+
+    path_parts.extend([
         prisma_flag,
-        f"fold_{fold_id}"
-    )
+        f"fold_{fold_id}",
+    ])
+
+    checkpoint_dir = os.path.join(*path_parts)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     for epoch in range(epochs):

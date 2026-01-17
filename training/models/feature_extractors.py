@@ -50,6 +50,10 @@ class ResNet18(nn.Module):
         return g.unsqueeze(-1).unsqueeze(-1) * x + b.unsqueeze(-1).unsqueeze(-1)
 
     def forward(self, x, prisma=None):
+        if self.use_film and prisma is None:
+            raise RuntimeError(
+                "ResNet18 was initialized with FiLM, but prisma=None was passed to forward()"
+            )
         m = self.model
 
         x = m.conv1(x)

@@ -1,5 +1,3 @@
-#training/models/model_factory.py
-
 from training.models.fusion_strategies import (
     SingleSensorModel,
     EarlyFusion,
@@ -43,10 +41,13 @@ def build_model(cfg: dict):
     # EARLY FUSION
     # ==========================
     if fusion == "early":
+        use_prisma = cfg.get("use_prisma", False)
+        prisma_channels = cfg.get("prisma_channels") if use_prisma else None
+
         return EarlyFusion(
             cfg["sar_channels"] + cfg["planet_channels"],
             cfg["num_classes"],
-            cfg.get("prisma_channels"),
+            prisma_channels,
             dropout,
             pool,
             pretrained,
@@ -56,10 +57,13 @@ def build_model(cfg: dict):
     # MID FUSION
     # ==========================
     if fusion == "mid":
+        use_prisma = cfg.get("use_prisma", False)
+        prisma_channels = cfg.get("prisma_channels") if use_prisma else None
+
         return MidFusion(
             cfg["sar_channels"] + cfg["planet_channels"],
             cfg["num_classes"],
-            cfg.get("prisma_channels"),
+            prisma_channels, 
             dropout,
             pool,
             pretrained,
@@ -69,11 +73,14 @@ def build_model(cfg: dict):
     # LATE FUSION
     # ==========================
     if fusion == "late":
+        use_prisma = cfg.get("use_prisma", False)
+        prisma_channels = cfg.get("prisma_channels") if use_prisma else None
+
         return LateFusion(
             cfg["sar_channels"],
             cfg["planet_channels"],
             cfg["num_classes"],
-            cfg.get("prisma_channels"),
+            prisma_channels,
             dropout,
             pool,
             pretrained,

@@ -72,7 +72,12 @@ class EarlyFusion(nn.Module):
         - optional PRISMA FiLM conditioning inside ResNet18
         """
         x = torch.cat([x_sar, x_planet], dim=1)
-        f = self.encoder(x, prisma)
+
+        if self.encoder.use_film:
+            f = self.encoder(x, prisma)
+        else:
+            f = self.encoder(x)
+
         return self.head(f)
     
 class MidFusion(nn.Module):
@@ -98,10 +103,15 @@ class MidFusion(nn.Module):
         """
         Mid fusion:
         - concatenate SAR and Planet at input
-        - FiLM applied at intermediate ResNet layers
+        - FiLM applied at intermediate ResNet layers only if enabled
         """
         x = torch.cat([x_sar, x_planet], dim=1)
-        f = self.encoder(x, prisma)
+
+        if self.encoder.use_film:
+            f = self.encoder(x, prisma)
+        else:
+            f = self.encoder(x)
+
         return self.head(f)
     
 class LateFusion(nn.Module):
@@ -126,6 +136,10 @@ class LateFusion(nn.Module):
         )
 
     def forward(self, x_sar, x_planet, prisma=None):
+        if self.film is not None and prisma is None:
+            raise RuntimeError(
+                "LateFusion was initialized with FiLM, but prisma=None was passed to forward()"
+            )
         f_s = self.enc_sar(x_sar)
         f_p = self.enc_planet(x_planet)
 

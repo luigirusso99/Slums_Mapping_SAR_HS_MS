@@ -3,7 +3,7 @@
 # ===============================
 num_folds: 4
 batch_size: 32
-epochs_per_fold: 1
+epochs_per_fold: 30
 
 # ===============================
 # OPTIMIZER SETTINGS
@@ -37,10 +37,10 @@ data:
 # ===============================
 model:
   # Architecture choice
-  fusion_type: mid     # single | early | mid | late
+  fusion_type: single     # single | early | mid | late
 
-  # Used ONLY if fusion_type: single
-  sensor_type: sar        # sar | planet
+  # Used only if fusion_type: single
+  sensor_type: planet        # sar | planet
 
   # PRISMA FiLM conditioning
   use_prisma: true       # true | false
