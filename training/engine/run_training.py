@@ -4,10 +4,8 @@ import yaml
 import torch
 from torch.utils.data import DataLoader
 import os
-
 from training.dataset.dataset import SlumDataset
-from training.models.model_factory import build_model_from_cfg
-from training.models.utils import load_backbone_config
+from training.models.model_factory import build_model
 from training.engine.trainer import Trainer
 
 def compute_pos_weight(dataset):
@@ -31,121 +29,98 @@ def compute_pos_weight(dataset):
     pos_weight = neg / pos
     return torch.tensor([pos_weight], dtype=torch.float32)
 
+
 def run_fold(fold_id, cfg_path):
-    """
-    Runs a single training fold using the configuration in cfg_path.
-    Supports mode ∈ {sar, planet, fusion} and fusion_type ∈ {early, mid, late}.
-    """
+    # =====================
+    # Load config
+    # =====================
     with open(cfg_path, "r") as f:
         cfg = yaml.safe_load(f)
-    model_cfg = cfg["model"].copy()
-    data_cfg = cfg.get("data", {})
 
-    # --------------------------------------------------
-    # Inject data-related parameters into model config
-    # (required for automatic input channel handling)
-    # --------------------------------------------------
-    model_cfg["mode"] = data_cfg.get("mode", "fusion")
-    model_cfg["sar_channels"] = data_cfg.get("sar_channels")
-    model_cfg["planet_channels"] = data_cfg.get("planet_channels")
+    data_cfg = cfg["data"]
+    model_cfg = cfg["model"]
 
-    # Mode comes from data section
-    mode = data_cfg.get("mode", "fusion")
-    fusion_type = model_cfg.get("fusion_type", "mid")
-
-    # Ensure consistency: if mode != fusion, fusion_type must be none
-    if mode != "fusion":
-        model_cfg["fusion_type"] = "none"
-        fusion_type = "none"
-    elif fusion_type == "none":
-        raise ValueError("fusion_type='none' is invalid when mode='fusion'")
-
-    # ------------------------
-    # Folds
-    # ------------------------
-    all_folds = list(range(1, cfg["num_folds"] + 1))
-    folds_train = [f for f in all_folds if f != fold_id]
-    folds_val = [fold_id]
-
-    # ------------------------
+    # =====================
     # Dataset
-    # ------------------------
+    # =====================
     train_ds = SlumDataset(
         metadata_csv=data_cfg["metadata_csv"],
         folds_csv=data_cfg["folds_csv"],
-        folds_to_use=folds_train,
-        mode=mode,
-        normalize=data_cfg["normalize"],
-        augment=data_cfg["augment"] 
+        folds_to_use=[fold_id],
+        fusion_type=model_cfg["fusion_type"],
+        sensor_type=model_cfg.get("sensor_type"),
+        normalize=data_cfg.get("normalize", True),
+        augment=data_cfg.get("augment", True),
+        use_prisma=model_cfg.get("use_prisma", False),
+        stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
+        stats_prisma_csv=data_cfg.get("normalization_stats_prisma_csv"),
     )
 
     val_ds = SlumDataset(
         metadata_csv=data_cfg["metadata_csv"],
         folds_csv=data_cfg["folds_csv"],
-        folds_to_use=folds_val,
-        mode=mode,
-        normalize=data_cfg["normalize"],
-        augment=False
+        folds_to_use=[fold_id],
+        fusion_type=model_cfg["fusion_type"],
+        sensor_type=model_cfg.get("sensor_type"),
+        normalize=data_cfg.get("normalize", True),
+        augment=False,
+        use_prisma=model_cfg.get("use_prisma", False),
+        stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
+        stats_prisma_csv=data_cfg.get("normalization_stats_prisma_csv"),
     )
 
-    # ------------------------
-    # Dataloaders
-    # ------------------------
-    # Training dataloader (always standard shuffled dataloader)
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=cfg["batch_size"],
-        shuffle=True,
-        num_workers=cfg.get("num_workers", 0),
-    )
+    train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=cfg["batch_size"], shuffle=False)
 
-    # Validation → NO balanced sampling
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=cfg["batch_size"],
-        shuffle=False,
-        num_workers=cfg.get("num_workers", 0)
-    )
-
-    # ------------------------
+    # =====================
     # Model
-    # ------------------------
-    backbones_cfg = load_backbone_config()
-    from training.models.model_factory import ModelConfig
-    model = build_model_from_cfg(backbones_cfg, ModelConfig(**model_cfg))
+    # =====================
+    model = build_model({
+        **model_cfg,
+        "sar_channels": data_cfg["sar_channels"],
+        "planet_channels": data_cfg["planet_channels"],
+        "prisma_channels": data_cfg.get("prisma_channels"),
+    })
 
-    # Device selection
-    device = (
-        torch.device("mps") if torch.backends.mps.is_available()
-        else torch.device("cuda") if torch.cuda.is_available()
-        else torch.device("cpu")
-    )
-
-    model.to(device)
-
-    data_mode = cfg["data"]["mode"]  # "sar" | "planet" | "fusion"
-
-    # Compute pos_weight for loss always from training dataset
+    # =====================
+    # Trainer
+    # =====================
     pos_weight = compute_pos_weight(train_ds)
-    optimizer_cfg = cfg["optimizer"]
-
-    # Consolidated configuration print
-    print(f"[Fold {fold_id}] mode={mode} | fusion={fusion_type} | device={device} | pos_weight={pos_weight.item():.3f}")
 
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
-        mode=data_mode,
-        optimizer_cfg=optimizer_cfg,
-        pos_weight=pos_weight,   # o False se usi sampler
+        optimizer_cfg=cfg["optimizer"],
+        pos_weight=pos_weight,
     )
 
-    # ------------------------
-    # Training loop
-    # ------------------------
-    best_f1 = 0.0   # track best F1-score
+    fusion = model_cfg["fusion_type"]
+    sensor = model_cfg.get("sensor_type", "fusion")
+    prisma_flag = "prisma" if model_cfg.get("use_prisma", False) else "no_prisma"
+
+    device = trainer.device
+
+    print(
+        f"[Fold {fold_id}] "
+        f"fusion={fusion} | sensor={sensor} | {prisma_flag} | "
+        f"device={device} | pos_weight={pos_weight.item():.3f}"
+    )
+
+    best_f1 = 0.0
     epochs = cfg["epochs_per_fold"]
+
+    # --------------------
+    # Checkpoint directory
+    # --------------------
+    checkpoint_dir = os.path.join(
+        cfg["save_dir"],
+        fusion,
+        sensor,
+        prisma_flag,
+        f"fold_{fold_id}"
+    )
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
     for epoch in range(epochs):
         (
@@ -164,18 +139,20 @@ def run_fold(fold_id, cfg_path):
             val_f1
         ) = trainer.evaluate()
 
-        print(f"[Fold {fold_id}] Epoch {epoch+1}/{epochs} | Train F1={tr_f1:.3f} | Val F1={val_f1:.3f}", end="\r")
+        print(
+            f"[Fold {fold_id}] Epoch {epoch+1}/{epochs} | "
+            f"Train F1={tr_f1:.3f} | Val F1={val_f1:.3f}"
+        )
 
-        # Save best model by F1
-        checkpoint_dir = f"{cfg['save_dir']}/{model_cfg['mode']}/{model_cfg.get('fusion_type','none')}/{model_cfg['backbone_sar']}/fold_{fold_id}"
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
+        # --------------------
+        # Save best checkpoint
+        # --------------------
         if val_f1 > best_f1:
             best_f1 = val_f1
+
             checkpoint_path = os.path.join(checkpoint_dir, "weights.pt")
             torch.save(model.state_dict(), checkpoint_path)
 
-            # Save metrics corresponding to this best checkpoint
             metrics_path = os.path.join(checkpoint_dir, "final_metrics.txt")
             with open(metrics_path, "w") as f:
                 f.write(f"Fold {fold_id} BEST Validation Metrics\n")
@@ -191,16 +168,11 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cfg", type=str, default="training/configs/experiment.yaml",
-                        help="Path to training config file.")
+    parser.add_argument("--cfg", type=str, default='training/configs/experiment.yaml')
     args = parser.parse_args()
 
     with open(args.cfg, "r") as f:
         cfg = yaml.safe_load(f)
-    num_folds = cfg["num_folds"]
 
-
-    for fold in range(1, num_folds + 1):
+    for fold in range(1, cfg["num_folds"] + 1):
         run_fold(fold, cfg_path=args.cfg)
-
-    print("\n✔ Training completed for all folds.")

@@ -9,7 +9,7 @@ epochs_per_fold: 1
 # OPTIMIZER SETTINGS
 # ===============================
 optimizer:
-  type: adamw      # adam | adamw | sgd
+  type: adamw        # adam | adamw | sgd
   lr: 1e-4
   weight_decay: 1e-4
 
@@ -19,36 +19,47 @@ optimizer:
 data:
   metadata_csv: "dataset/metadata.csv"
   folds_csv: "dataset/folds.csv"
-  normalization_stats_csv: "dataset/normalization_stats.csv"
 
-  mode: sar        # sar | planet | fusion --> if fusion, both inputs are used, else single-input model
-  augment: True       # geometric physically meaningful augmentations
-  normalize: true     # Z-score based on stats CSV
+  # Normalization statistics
+  normalization_stats_prisma_csv: "dataset/prisma_normalization_stats.csv"
+  normalization_stats_opt_sar_csv: "dataset/normalization_stats_opt_sar.csv"
 
+  augment: true
+  normalize: true
+
+  # Input channels
   sar_channels: 1
   planet_channels: 8
+  prisma_channels: 230   # PRISMA hyperspectral bands (conditioning only)
 
 # ===============================
 # MODEL SETTINGS
 # ===============================
 model:
-  fusion_type: none       # early | mid | late or none for single-input models
+  # Architecture choice
+  fusion_type: mid     # single | early | mid | late
 
-  # Backbone choices (from training/configs/backbones.yaml)
-  backbone_sar: resnet18
-  backbone_planet: resnet18
+  # Used ONLY if fusion_type: single
+  sensor_type: sar        # sar | planet
 
+  # PRISMA FiLM conditioning
+  use_prisma: true       # true | false
+
+  # Classification settings
   num_classes: 1
-  fusion_dim: 512
   dropout: 0.2
+  pool_type: avg          # avg | max | avgmax
+
+  # Backbone (fixed)
+  pretrained: true        # torchvision ResNet18 pretrained weights
 
 # ===============================
 # LOGGING, SAVING, CHECKPOINTS
 # ===============================
-save_dir: "training/checkpoints/" # path to save model checkpoints and metrics
-inference_save_dir: "inference/predictions/" # path to save inference predictions
-save_every: 1            # save every N epochs
-eval_every: 1            # evaluate every N epochs
+save_dir: "training/checkpoints/"
+inference_save_dir: "inference/predictions/"
+save_every: 1
+eval_every: 1
 
 # ===============================
 # PATCH GEOMETRY

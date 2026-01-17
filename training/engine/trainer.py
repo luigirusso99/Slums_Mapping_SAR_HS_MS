@@ -10,7 +10,7 @@ from training.engine.metrics import (
 )
 
 class Trainer:
-    def __init__(self, model, train_loader, val_loader, mode="fusion", optimizer_cfg=None, pos_weight=None):
+    def __init__(self, model, train_loader, val_loader, optimizer_cfg=None, pos_weight=None):
         # Auto-select device
         if torch.backends.mps.is_available():
             device = torch.device("mps")
@@ -23,7 +23,6 @@ class Trainer:
         self.model = model.to(device)
         self.train_loader = train_loader
         self.val_loader = val_loader
-        self.mode = mode  # 'sar', 'planet', or 'fusion'
 
         self.pos_weight = pos_weight
 
@@ -55,32 +54,26 @@ class Trainer:
     # ============================
     def forward_pass(self, inputs, labels):
         """
-        Unified forward logic for training and evaluation.
-        Returns logits, loss, accuracy, precision, recall, f1.
+        Fully data-driven forward pass.
+        The dataset defines the structure of `inputs`.
+        The model signature must match it.
         """
         labels = labels.to(self.device).float().unsqueeze(1)
 
-        if self.mode == "fusion":
-            sar, planet = inputs
-            sar = sar.to(self.device)
-            planet = planet.to(self.device)
-            logits = self.model(sar, planet)
-
-        elif self.mode == "sar":
-            sar = inputs.to(self.device)
-            logits = self.model(sar)
-
-        elif self.mode == "planet":
-            planet = inputs.to(self.device)
-            logits = self.model(planet)
-
+        # --------------------
+        # DATA-DRIVEN FORWARD
+        # --------------------
+        if isinstance(inputs, (tuple, list)):
+            inputs = [x.to(self.device) for x in inputs]
+            logits = self.model(*inputs)
         else:
-            raise ValueError(f"Unsupported mode: {self.mode}")
+            logits = self.model(inputs.to(self.device))
 
-        # Compute loss
+        # --------------------
+        # LOSS + METRICS
+        # --------------------
         loss = self.criterion(logits, labels)
 
-        # Prepare for metrics
         logits_flat = logits.squeeze(1)
         labels_flat = labels.squeeze(1)
 

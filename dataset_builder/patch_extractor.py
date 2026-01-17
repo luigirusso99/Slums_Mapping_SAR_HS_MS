@@ -94,7 +94,7 @@ def extract_patches(
         with open(csv_path, "w", newline='') as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow([
-                "patch_id", "col_planet", "row_planet", "lat", "lon",
+                "patch_id", "x", "y", "lat", "lon",
                 "planet_path", "sar_path", "prisma_path",
                 "prisma_h", "prisma_w",
                 "slum_fraction", "label"
