@@ -44,8 +44,9 @@ def run_rasterize_fullres(cfg_path: str, output_dir: Optional[str] = None):
     model_cfg = cfg["model"]
 
     metadata_csv = data_cfg["metadata_csv"]
-    mode = data_cfg.get("mode", "fusion")
-    fusion_type = model_cfg.get("fusion_type", "none")
+    fusion_type = model_cfg["fusion_type"]
+    sensor_type = model_cfg.get("sensor_type")
+    prisma_flag = "prisma" if model_cfg.get("use_prisma", False) else "no_prisma"
 
     # Patch geometry from config
     patch_cfg = cfg.get("patch", {})
@@ -71,13 +72,12 @@ def run_rasterize_fullres(cfg_path: str, output_dir: Optional[str] = None):
     kernel = gaussian_filter(radial_kernel.astype(np.float32), sigma=patch_size / 6.0)
     kernel = kernel / kernel.max()
 
-    # Path to OOF predictions (same convention as run_city_inference)
-    oof_dir = os.path.join(
-        cfg["inference_save_dir"],
-        mode,
-        fusion_type if mode == "fusion" else "none",
-        model_cfg["backbone_sar"],
-    )
+    # Path to OOF predictions (same convention as run_training.py)
+    path_parts = [cfg["inference_save_dir"], fusion_type]
+    if fusion_type == "single":
+        path_parts.append(sensor_type)
+    path_parts.append(prisma_flag)
+    oof_dir = os.path.join(*path_parts)
     oof_csv = os.path.join(oof_dir, "oof_predictions.csv")
 
     if not os.path.exists(oof_csv):
@@ -85,6 +85,11 @@ def run_rasterize_fullres(cfg_path: str, output_dir: Optional[str] = None):
 
     print(f"→ Reading predictions: {oof_csv}")
     print(f"→ Reading metadata:    {metadata_csv}")
+    print(
+        f"→ Inference mode: fusion={fusion_type} | "
+        f"sensor={sensor_type if fusion_type == 'single' else fusion_type} | "
+        f"{prisma_flag}"
+    )
 
     df_pred = pd.read_csv(oof_csv)
     df_meta = pd.read_csv(metadata_csv)

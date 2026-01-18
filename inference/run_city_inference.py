@@ -20,8 +20,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from training.dataset.dataset import SlumDataset
-from training.models.utils import load_backbone_config
-from training.models.model_factory import ModelConfig, build_model_from_cfg
+from training.models.model_factory import build_model
 
 
 # ============================================================
@@ -50,18 +49,13 @@ def run_city_inference(cfg_path, valid_mask_tif=None):
     model_cfg_dict = cfg["model"]
     num_folds = cfg["num_folds"]
 
-    mode = data_cfg.get("mode", "fusion")
-    model_cfg_dict["mode"] = mode
-    model_cfg_dict["sar_channels"] = data_cfg.get("sar_channels")
-    model_cfg_dict["planet_channels"] = data_cfg.get("planet_channels")
-
-    if mode != "fusion":
-        model_cfg_dict["fusion_type"] = "none"
+    fusion = model_cfg_dict["fusion_type"]
+    sensor = model_cfg_dict.get("sensor_type", "fusion")
+    use_prisma = model_cfg_dict.get("use_prisma", False)
+    prisma_flag = "prisma" if use_prisma else "no_prisma"
 
     device = get_device()
     print(f"→ Using device: {device}")
-
-    backbones_cfg = load_backbone_config()
 
     # ------------------------
     # Load VALID MASK (optional)
@@ -82,12 +76,17 @@ def run_city_inference(cfg_path, valid_mask_tif=None):
     # ------------------------
     # Output paths
     # ------------------------
-    infer_root = os.path.join(
+    infer_parts = [
         cfg["inference_save_dir"],
-        mode,
-        model_cfg_dict["fusion_type"],
-        model_cfg_dict["backbone_sar"]
-    )
+        fusion,
+    ]
+
+    if fusion == "single":
+        infer_parts.append(sensor)
+
+    infer_parts.append(prisma_flag)
+
+    infer_root = os.path.join(*infer_parts)
     os.makedirs(infer_root, exist_ok=True)
     out_csv = os.path.join(infer_root, "oof_predictions.csv")
 
@@ -110,10 +109,14 @@ def run_city_inference(cfg_path, valid_mask_tif=None):
             metadata_csv=data_cfg["metadata_csv"],
             folds_csv=data_cfg["folds_csv"],
             folds_to_use=[fold],
-            mode=mode,
+            fusion_type=fusion,
+            sensor_type=model_cfg_dict.get("sensor_type"),
             normalize=data_cfg["normalize"],
             augment=False,
-            return_id=True
+            return_id=True,
+            use_prisma=use_prisma,
+            stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
+            stats_prisma_csv=data_cfg.get("normalization_stats_prisma_csv"),
         )
 
         dl = DataLoader(ds, batch_size=cfg["batch_size"], shuffle=False)
@@ -121,19 +124,30 @@ def run_city_inference(cfg_path, valid_mask_tif=None):
         # ------------------------
         # Build model
         # ------------------------
-        model_cfg = ModelConfig(**model_cfg_dict)
-        model = build_model_from_cfg(backbones_cfg, model_cfg)
+        model = build_model({
+            **model_cfg_dict,
+            "sar_channels": data_cfg["sar_channels"],
+            "planet_channels": data_cfg["planet_channels"],
+            "prisma_channels": data_cfg.get("prisma_channels"),
+        })
         model.to(device)
         model.eval()
 
-        ckpt_path = os.path.join(
+        ckpt_parts = [
             cfg["save_dir"],
-            mode,
-            model_cfg_dict["fusion_type"],
-            model_cfg_dict["backbone_sar"],
+            fusion,
+        ]
+
+        if fusion == "single":
+            ckpt_parts.append(sensor)
+
+        ckpt_parts.extend([
+            prisma_flag,
             f"fold_{fold}",
-            "weights.pt"
-        )
+            "weights.pt",
+        ])
+
+        ckpt_path = os.path.join(*ckpt_parts)
 
         if not os.path.exists(ckpt_path):
             print("⚠ Missing checkpoint, skipping fold")
@@ -172,18 +186,41 @@ def run_city_inference(cfg_path, valid_mask_tif=None):
                     # ------------------------------------------
                     # MODEL FORWARD
                     # ------------------------------------------
-                    if mode == "fusion":
-                        sar, planet = inputs
-                        logits = model(
-                            sar[i:i+1].to(device),
-                            planet[i:i+1].to(device)
-                        )
-                    elif mode == "sar":
-                        logits = model(inputs[i:i+1].to(device))
-                    elif mode == "planet":
-                        logits = model(inputs[i:i+1].to(device))
+                    if fusion == "single":
+                        if sensor == "sar":
+                            if use_prisma:
+                                sar, prisma = inputs
+                                logits = model(
+                                    sar[i:i+1].to(device),
+                                    prisma[i:i+1].to(device),
+                                )
+                            else:
+                                logits = model(inputs[i:i+1].to(device))
+
+                        elif sensor == "planet":
+                            if use_prisma:
+                                planet, prisma = inputs
+                                logits = model(
+                                    planet[i:i+1].to(device),
+                                    prisma[i:i+1].to(device),
+                                )
+                            else:
+                                logits = model(inputs[i:i+1].to(device))
+
                     else:
-                        raise ValueError("Invalid mode")
+                        if use_prisma:
+                            sar, planet, prisma = inputs
+                            logits = model(
+                                sar[i:i+1].to(device),
+                                planet[i:i+1].to(device),
+                                prisma[i:i+1].to(device),
+                            )
+                        else:
+                            sar, planet = inputs
+                            logits = model(
+                                sar[i:i+1].to(device),
+                                planet[i:i+1].to(device),
+                            )
 
                     probs[i] = torch.sigmoid(
                         logits.squeeze(1)
@@ -225,7 +262,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--valid_mask_tif",
         type=str,
-        default='/Users/luigi/Desktop/PHD/PROGETTI_E_ATTIVITA_PHD/HEATCORDOBA/slums/Python_Project_HS_MS/preprocessing/coregistered_outputs_3m/CSK2_L1D_20250728_3m.tif',
+        default='/Users/luigi/Desktop/PHD/PROGETTI_E_ATTIVITA_PHD/HEATCORDOBA/slums/PyProj_Slums_Mapping_SAR_MS_HS/raw_data/CSK/CSKS2_GTC_B_HI_04_HH_RA_SF_20250728103626_20250728103634.S01.SBI_aligned.tif',
         help="SAR GeoTIFF used to compute valid mask (nodata-aware)"
     )
 

@@ -1,6 +1,12 @@
-# analysis/compute_oof_metrics.py
+"""
+OOF Metrics Computation Module
+------------------------------
+Computes evaluation metrics from out-of-fold (OOF) predictions.
+Designed to be import-safe and orchestrated by inference/main.py.
+"""
 
 import argparse
+import os
 import pandas as pd
 import numpy as np
 from sklearn.metrics import (
@@ -34,8 +40,8 @@ def compute_best_threshold(labels, probs, num_thresholds=200):
     return best_threshold, best_metrics
 
 
-def main(oof_csv):
-    print("\n▶ Computing OOF metrics from:", oof_csv)
+def run_oof_metrics(oof_csv: str, out_dir: str) -> str:
+    os.makedirs(out_dir, exist_ok=True)
 
     df = pd.read_csv(oof_csv)
 
@@ -61,25 +67,45 @@ def main(oof_csv):
     acc_opt = accuracy_score(labels, preds_opt)
     kappa_opt = cohen_kappa_score(labels, preds_opt)
 
-    # -----------------------------
-    # PRINT REPORT
-    # -----------------------------
-    print("\n================ OOF METRICS ================")
-    print(f"Total samples: {len(labels)}")
-    print("----------------------------------------------")
-    print(f"ROC-AUC:      {roc_auc:.4f}")
-    print(f"PR-AUC:       {pr_auc:.4f}")
-    print("----------------------------------------------")
-    print(f"BEST THRESHOLD (max F1):  {best_t:.3f}")
-    print("----------------------------------------------")
-    print(f"Accuracy:     {acc_opt:.4f}")
-    print(f"Cohen's Kappa:{kappa_opt:.4f}")
-    print(f"Precision:    {best_prec:.4f}")
-    print(f"Recall:       {best_rec:.4f}")
-    print(f"F1-score:     {best_f1:.4f}")
-    print("==============================================\n")
+    # Write human-readable report
+    out_txt = os.path.join(out_dir, "oof_metrics.txt")
+    with open(out_txt, "w") as f:
+        f.write("OOF METRICS REPORT\n")
+        f.write("=================\n")
+        f.write(f"Total samples: {len(labels)}\n\n")
+        f.write("GLOBAL METRICS\n")
+        f.write("--------------\n")
+        f.write(f"ROC-AUC: {roc_auc:.4f}\n")
+        f.write(f"PR-AUC:  {pr_auc:.4f}\n\n")
+        f.write("OPTIMAL THRESHOLD (max F1)\n")
+        f.write("-------------------------\n")
+        f.write(f"Threshold: {best_t:.4f}\n\n")
+        f.write("METRICS @ OPTIMAL THRESHOLD\n")
+        f.write("---------------------------\n")
+        f.write(f"Accuracy:  {acc_opt:.4f}\n")
+        f.write(f"Kappa:     {kappa_opt:.4f}\n")
+        f.write(f"Precision: {best_prec:.4f}\n")
+        f.write(f"Recall:    {best_rec:.4f}\n")
+        f.write(f"F1-score:  {best_f1:.4f}\n")
 
-    print("✔ Done.")
+    # Save machine-readable CSV
+    metrics_df = pd.DataFrame([{
+        "roc_auc": roc_auc,
+        "pr_auc": pr_auc,
+        "best_threshold": best_t,
+        "accuracy": acc_opt,
+        "kappa": kappa_opt,
+        "precision": best_prec,
+        "recall": best_rec,
+        "f1": best_f1,
+        "n_samples": len(labels),
+    }])
+    out_csv = os.path.join(out_dir, "oof_metrics.csv")
+    metrics_df.to_csv(out_csv, index=False)
+
+    print(f"✔ OOF metrics saved to: {out_txt}")
+
+    return out_txt
 
 
 if __name__ == "__main__":
@@ -90,8 +116,11 @@ if __name__ == "__main__":
         required=True,
         help="Path to oof_predictions.csv"
     )
+    parser.add_argument(
+        "--out_dir",
+        type=str,
+        required=True,
+        help="Directory where metrics files will be saved"
+    )
     args = parser.parse_args()
-    main(args.oof)
-
-    ## Example usage:
-    # python -m inference.compute_oof_metrics --oof inference/predictions/planet/none/resnet18/oof_predictions.csv
+    run_oof_metrics(args.oof, args.out_dir)
