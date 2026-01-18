@@ -42,6 +42,7 @@ Thumbs.db
 training/checkpoints/
 training/logs/
 inference/outputs/
+inference/predictions/
 *.pt
 *.pth
 *.ckpt
