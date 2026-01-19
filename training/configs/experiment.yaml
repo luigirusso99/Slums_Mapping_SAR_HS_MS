@@ -32,13 +32,13 @@ data:
   # Input channels
   sar_channels: 1
   planet_channels: 8
-  prisma_channels: 230   # PRISMA hyperspectral bands (conditioning only)
+  prisma_channels: 16   # PRISMA components extracted through PCA
 
   # ===============================
   # PRISMA PCA (ONLY supported PRISMA pathway)
   # ===============================
   prisma_pca:
-    enabled: true              # MUST be true if model.use_prisma = true
+    enabled: true          
     n_components: 16           # e.g. 8 / 16 / 32
     weights_dir: "dataset/prisma_pca_weights/"
 
@@ -47,13 +47,14 @@ data:
 # ===============================
 model:
   # Architecture choice
-  fusion_type: late    # single | early | mid | late
+  fusion_type: mid    # single | early | mid | late
 
   # Used only if fusion_type: single
-  sensor_type: planet        # sar | planet
+  sensor_type: sar        # sar | planet
 
-  # PRISMA FiLM conditioning
-  use_prisma: true      
+  # PRISMA PCA reduced components
+  use_prisma: true   
+
   # Classification settings
   num_classes: 1
   dropout: 0.2

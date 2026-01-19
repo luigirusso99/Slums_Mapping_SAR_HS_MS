@@ -40,6 +40,7 @@ Thumbs.db
 # Machine learning
 # =========================
 training/checkpoints/
+training/checkpoints_old/
 training/logs/
 inference/outputs/
 inference/predictions/
@@ -51,6 +52,7 @@ inference/predictions/
 # Dataset (VERY IMPORTANT)
 # =========================
 dataset/patches_planet/
+dataset/prisma_pca_weights/
 dataset/patches_sar/
 dataset/patches_prisma/
 dataset/slum_labels_common.tif

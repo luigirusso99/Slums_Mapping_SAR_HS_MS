@@ -116,7 +116,7 @@ def run_city_inference(cfg_path, valid_mask_tif=None):
             return_id=True,
             use_prisma=use_prisma,
             stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
-            stats_prisma_csv=data_cfg.get("normalization_stats_prisma_csv"),
+            prisma_pca_cfg=data_cfg.get("prisma_pca"),
         )
 
         dl = DataLoader(ds, batch_size=cfg["batch_size"], shuffle=False)
@@ -128,7 +128,7 @@ def run_city_inference(cfg_path, valid_mask_tif=None):
             **model_cfg_dict,
             "sar_channels": data_cfg["sar_channels"],
             "planet_channels": data_cfg["planet_channels"],
-            "prisma_channels": data_cfg.get("prisma_channels"),
+            "prisma_channels": data_cfg["prisma_channels"] if use_prisma else None,
         })
         model.to(device)
         model.eval()

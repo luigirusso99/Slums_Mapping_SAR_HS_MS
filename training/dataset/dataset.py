@@ -8,7 +8,7 @@ import os, joblib
 
 class SlumDataset(Dataset):
     """
-    PRISMA is supported ONLY via PCA embeddings (raw hyperspectral input is not allowed).
+    PRISMA is supported via PCA embeddings.
     One PCA model is used per fold to avoid data leakage.
     """
 
@@ -158,10 +158,8 @@ class SlumDataset(Dataset):
         # Normalization
         if self.normalize:
             if sar is not None and self.norm_sar is not None:
-                print('normalizing sar patch')
                 sar = self.norm_sar(sar)
             if planet is not None and self.norm_planet is not None:
-                print('normalizing planet patch')
                 planet = self.norm_planet(planet)
 
         y = torch.tensor(row["label"], dtype=torch.long)
