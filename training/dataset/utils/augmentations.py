@@ -20,20 +20,23 @@ class GeoAugmentations:
         self.vflip = vflip
         self.rot90 = rot90
 
-    def __call__(self, prisma, planet):
+    def __call__(self, sar, planet, prisma):
         # --- Horizontal flip
         if self.hflip and random.random() < 0.5:
-            prisma = prisma.flip(-1) if prisma is not None else None
+            sar = sar.flip(-1) if sar is not None else None
             planet = planet.flip(-1) if planet is not None else None
+            prisma = prisma.flip(-1) if prisma is not None else None
 
         # --- Vertical flip
         if self.vflip and random.random() < 0.5:
-            prisma = prisma.flip(-2) if prisma is not None else None
+            sar = sar.flip(-2) if sar is not None else None
             planet = planet.flip(-2) if planet is not None else None
+            prisma = prisma.flip(-2) if prisma is not None else None
 
         # --- 90° rotation
         if self.rot90 and random.random() < 0.5:
-            prisma = prisma.transpose(-1, -2) if prisma is not None else None
+            sar = sar.transpose(-1, -2) if sar is not None else None
             planet = planet.transpose(-1, -2) if planet is not None else None
+            prisma = prisma.transpose(-1, -2) if prisma is not None else None
 
-        return prisma, planet
+        return sar, planet, prisma

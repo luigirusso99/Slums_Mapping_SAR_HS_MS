@@ -4,16 +4,21 @@ import torch, rasterio, pandas as pd, random, numpy as np
 from torch.utils.data import Dataset
 from training.dataset.utils.augmentations import GeoAugmentations
 from training.dataset.utils.normalization import ZScoreNormalizer
+import os, joblib
 
 class SlumDataset(Dataset):
+    """
+    PRISMA is supported ONLY via PCA embeddings (raw hyperspectral input is not allowed).
+    One PCA model is used per fold to avoid data leakage.
+    """
 
     def __init__(self, metadata_csv, folds_csv, folds_to_use,
                  fusion_type="fusion",
                  sensor_type=None,
                  normalize=True, augment=True, return_id=False,
                  use_prisma=False,
-                 stats_opt_sar_csv="dataset/normalization_stats.csv",
-                 stats_prisma_csv=None):
+                 stats_opt_sar_csv="dataset/normalization_stats_opt_sar.csv",
+                 prisma_pca_cfg=None):
         
         assert fusion_type in ("single", "early", "mid", "late")
         if fusion_type == "single":
@@ -47,28 +52,37 @@ class SlumDataset(Dataset):
         self.return_id = return_id
         self.use_prisma = use_prisma
 
+        if self.use_prisma:
+            if prisma_pca_cfg is None or not prisma_pca_cfg.get("enabled", False):
+                raise RuntimeError(
+                    "use_prisma=True requires prisma_pca_cfg.enabled=True (PRISMA raw is no longer supported)"
+                )
+
+        if prisma_pca_cfg is not None and prisma_pca_cfg.get("enabled", False):
+            self.use_prisma_pca = True
+        else:
+            self.use_prisma_pca = False
+        self.prisma_pca_cfg = prisma_pca_cfg
+
+        self.fold_ids = sorted(folds_to_use)
+
         # internal augmentations
         self.aug = GeoAugmentations() if augment else None
 
         # normalizers are now derived automatically from min/max statistics
         if normalize:
-            self.norm_sar, self.norm_planet, self.norm_prisma = self.load_stats_and_build_normalizers_multi(
-                stats_opt_sar_csv, stats_prisma_csv
-            )
+            # Do not build norm_prisma if using PCA (PRISMA raw not supported)
+            self.norm_sar, self.norm_planet = self.load_stats_and_build_normalizers_multi(stats_opt_sar_csv)
         else:
             self.norm_sar = None
             self.norm_planet = None
-            self.norm_prisma = None
 
-    def load_stats_and_build_normalizers_multi(self, stats_opt_sar_csv, stats_prisma_csv):
+    def load_stats_and_build_normalizers_multi(self, stats_opt_sar_csv):
         """
         Loads per-band statistics from normalization CSVs and builds
         Z-score normalizers for:
         - SAR (single-band backscatter)
         - PlanetScope (8-band multispectral)
-        - PRISMA (if use_prisma=True)
-        Note: SAR and Planet statistics are read from the same CSV using the 'sensor' column.
-        PRISMA statistics are read from a separate CSV.
 
         fusion_type="single" corresponds to SAR-only or Planet-only dataset
         fusion_type in ("early","mid","late") corresponds to fusion dataset
@@ -94,21 +108,7 @@ class SlumDataset(Dataset):
             std_planet[std_planet == 0] = 1.0
             norm_planet = ZScoreNormalizer(mean_planet, std_planet)
 
-        # Load PRISMA stats only if use_prisma=True
-        norm_prisma = None
-        if self.use_prisma:
-            if stats_prisma_csv is None:
-                raise RuntimeError("stats_prisma_csv must be provided if use_prisma=True and normalize=True")
-
-            prisma_df = pd.read_csv(stats_prisma_csv)
-            prisma_df = prisma_df[prisma_df["sensor"] == "prisma"].sort_values("band")
-
-            mean_prisma = torch.tensor(prisma_df["mean"].values, dtype=torch.float32)
-            std_prisma  = torch.tensor(prisma_df["std"].values,  dtype=torch.float32)
-            std_prisma[std_prisma == 0] = 1.0
-            norm_prisma = ZScoreNormalizer(mean_prisma, std_prisma)
-
-        return norm_sar, norm_planet, norm_prisma
+        return norm_sar, norm_planet
     # ------------------------------
 
     def load(self, path):
@@ -125,25 +125,44 @@ class SlumDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
+        fold = int(row["fold"])
 
         sar = self.load(row["sar_path"]) if self.mode in ("sar", "fusion") else None
         planet = self.load(row["planet_path"]) if self.mode in ("planet", "fusion") else None
         prisma = None
         if self.use_prisma:
             prisma = self.load_npz(row["prisma_path"])
+            C, H, W = prisma.shape
+            prisma_flat = prisma.view(C, -1).permute(1, 0).numpy()
 
-        # Augmentations only on sar and planet
+            pca_path = os.path.join(
+                self.prisma_pca_cfg["weights_dir"],
+                f"prisma_pca_fold{fold}.joblib"
+            )
+
+            if not hasattr(self, "_pca_cache"):
+                self._pca_cache = {}
+
+            if fold not in self._pca_cache:
+                self._pca_cache[fold] = joblib.load(pca_path)
+
+            pca = self._pca_cache[fold]
+            z = pca.transform(prisma_flat)
+            z = torch.from_numpy(z).float().permute(1, 0).view(-1, H, W)
+            prisma = z
+
+        # Augmentations (SAR / Planet / PRISMA if present)
         if self.aug:
-            sar, planet = self.aug(sar, planet)
+            sar, planet, prisma = self.aug(sar, planet, prisma)
 
         # Normalization
         if self.normalize:
             if sar is not None and self.norm_sar is not None:
+                print('normalizing sar patch')
                 sar = self.norm_sar(sar)
             if planet is not None and self.norm_planet is not None:
+                print('normalizing planet patch')
                 planet = self.norm_planet(planet)
-            if prisma is not None and self.norm_prisma is not None:
-                prisma = self.norm_prisma(prisma)
 
         y = torch.tensor(row["label"], dtype=torch.long)
         patch_id = row["patch_id"]
@@ -181,119 +200,158 @@ class SlumDataset(Dataset):
     def __len__(self):
         return len(self.df)
     
-if __name__ == "__main__":
-    # Flexible test for all modes
+def main():
+    import yaml
+    import random
+    import torch
+    import matplotlib.pyplot as plt
+    CFG_PATH = "training/configs/experiment.yaml"
+    # --------------------------------------------------
+    # Load config
+    # --------------------------------------------------
+    with open(CFG_PATH, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    data_cfg = cfg["data"]
+    model_cfg = cfg["model"]
+
+    prisma_pca_cfg = data_cfg.get("prisma_pca")
+
+    print("\n========== DATASET TEST ==========")
+    print(f"Fusion type: {model_cfg['fusion_type']}")
+    print(f"Sensor type: {model_cfg.get('sensor_type')}")
+    print(f"Use PRISMA:  {model_cfg.get('use_prisma', False)}")
+    print(
+        f"Use PRISMA PCA: "
+        f"{prisma_pca_cfg is not None and prisma_pca_cfg.get('enabled', False)}"
+    )
+
+    # --------------------------------------------------
+    # Build dataset (single fold for testing)
+    # --------------------------------------------------
     dataset = SlumDataset(
-        metadata_csv="dataset/metadata.csv",
-        folds_csv="dataset/folds.csv",
-        folds_to_use=[1,2,3],
-        fusion_type="single",
-        sensor_type="sar",
-        normalize=True,
+        metadata_csv=data_cfg["metadata_csv"],
+        folds_csv=data_cfg["folds_csv"],
+        folds_to_use=[1, 2, 3, 4],
+        fusion_type=model_cfg["fusion_type"],
+        sensor_type=model_cfg.get("sensor_type"),
+        normalize=data_cfg.get("normalize", True),
         augment=True,
         return_id=True,
-        use_prisma=True,
-        stats_opt_sar_csv="dataset/normalization_stats_opt_sar.csv",
-        stats_prisma_csv="dataset/prisma_normalization_stats.csv"
+        use_prisma=model_cfg.get("use_prisma", False),
+        stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
+        prisma_pca_cfg=prisma_pca_cfg,
     )
 
-    print("Dataset size:", len(dataset))
-    idx = random.randint(0, len(dataset)-1)
+    print(f"Dataset size: {len(dataset)}")
 
-    out = dataset[idx]
+    # --------------------------------------------------
+    # Sample one element
+    # --------------------------------------------------
+    idx = random.randint(0, len(dataset) - 1)
+    sample, label, patch_id = dataset[idx]
 
-    if len(out) == 3:
-        sample, label, pid = out
-        print("Patch ID:", pid)
-    else:
-        sample, label = out
+    print(f"\nSample index: {idx}")
+    print(f"Patch ID:     {patch_id}")
+    print(f"Label:        {label}")
 
-    # Detect mode (single vs fusion)
-    if isinstance(sample, tuple):
-        if dataset.use_prisma and len(sample) == 3:
-            sar, planet, prisma = sample
-            print("sar shape:", sar.shape if sar is not None else None)
-            print("Planet shape:", planet.shape if planet is not None else None)
-            print("Prisma shape:", prisma.shape if prisma is not None else None)
-            print(torch.unique(sar), torch.unique(planet), torch.unique(prisma))
-            import matplotlib.pyplot as plt
-            plt.subplot(1, 3, 1)
-            plt.imshow(sar[0], cmap = 'gray')
-            plt.subplot(1, 3, 2)
-            plt.imshow(planet[0], cmap = 'gray')
-            plt.subplot(1, 3, 3)
-            plt.imshow(prisma[0], cmap = 'gray')
-            plt.show()
-        elif dataset.use_prisma and len(sample) == 2:
-            # this covers cases sar+prisma or planet+prisma
-            a, b = sample
-            print("Sample 1 shape:", a.shape if a is not None else None)
-            print("Sample 2 shape:", b.shape if b is not None else None)
-            print(torch.unique(a), torch.unique(b))
-            import matplotlib.pyplot as plt
-            plt.subplot(1, 2, 1)
-            plt.imshow(a[0], cmap = 'gray')
-            plt.subplot(1, 2, 2)
-            plt.imshow(b[0], cmap = 'gray')
-            plt.show()
-        else:
-            sar, planet = sample
-            print("sar shape:", sar.shape if sar is not None else None)
-            print("Planet shape:", planet.shape if planet is not None else None)
-            print(torch.unique(sar), torch.unique(planet))
-            import matplotlib.pyplot as plt
-            plt.subplot(1, 2, 1)
-            plt.imshow(sar[0], cmap = 'gray')
-            plt.subplot(1, 2, 2)
-            plt.imshow(planet[0], cmap = 'gray')
-            plt.show()
-        
-    else:
-        print("Sample shape:", sample.shape)
+    # --------------------------------------------------
+    # Unpack sample
+    # --------------------------------------------------
+    if not isinstance(sample, tuple):
+        raise RuntimeError("Expected tuple sample (single or fusion mode)")
 
-    print("Label:", label)
+    tensors = [x for x in sample if x is not None]
 
-    # Additional example: fusion dataset
-    fusion_dataset = SlumDataset(
-        metadata_csv="dataset/metadata.csv",
-        folds_csv="dataset/folds.csv",
-        folds_to_use=[1,2,3],
-        fusion_type="mid",
-        sensor_type=None,
-        normalize=True,
-        augment=True,
-        return_id=True,
-        use_prisma=True,
-        stats_opt_sar_csv="dataset/normalization_stats_opt_sar.csv",
-        stats_prisma_csv="dataset/prisma_normalization_stats.csv"
-    )
+    for i, t in enumerate(tensors):
+        print(f"Input {i} shape: {tuple(t.shape)}")
 
-    print("Fusion dataset size:", len(fusion_dataset))
-    idx = random.randint(0, len(fusion_dataset)-1)
+    # --------------------------------------------------
+    # Visualize inputs (SAR / Planet / PRISMA)
+    # --------------------------------------------------
+    if model_cfg.get("use_prisma", False):
+        prisma = sample[-1]  # always last
+        C, H, W = prisma.shape
+        print(f"\nPRISMA tensor: {C} channels")
 
-    out = fusion_dataset[idx]
+        show_prisma = min(6, C)
 
-    if len(out) == 3:
-        sample, label, pid = out
-        print("Patch ID:", pid)
-    else:
-        sample, label = out
+        # Determine presence of SAR / Planet
+        sar = None
+        planet = None
 
-    if isinstance(sample, tuple):
-        if fusion_dataset.use_prisma and len(sample) == 3:
-            sar, planet, prisma = sample
-            print("sar shape:", sar.shape if sar is not None else None)
-            print("Planet shape:", planet.shape if planet is not None else None)
-            print("Prisma shape:", prisma.shape if prisma is not None else None)
-        elif fusion_dataset.use_prisma and len(sample) == 2:
-            a, b = sample
-            print("Sample 1 shape:", a.shape if a is not None else None)
-            print("Sample 2 shape:", b.shape if b is not None else None)
-        else:
-            sar, planet = sample
-            print("sar shape:", sar.shape if sar is not None else None)
-            print("Planet shape:", planet.shape if planet is not None else None)
-    else:
-        print("Sample shape:", sample.shape)
+        if dataset.mode == "sar":
+            sar = sample[0]
+        elif dataset.mode == "planet":
+            planet = sample[0]
+        elif dataset.mode == "fusion":
+            sar, planet = sample[0], sample[1]
 
-    print("Label:", label)
+        print(
+        "SAR mean/std:",
+        sar.mean().item(),
+        sar.std().item(),
+        )
+
+        print(
+        "Planet mean/std:",
+        planet.mean().item(),
+        planet.std().item(),
+        )
+
+        n_rows = 1
+        if sar is not None:
+            n_rows += 1
+        if planet is not None:
+            n_rows += 1
+
+        fig, axes = plt.subplots(
+            n_rows, show_prisma, figsize=(3 * show_prisma, 3 * n_rows)
+        )
+
+        if n_rows == 1:
+            axes = axes[None, :]
+
+        row = 0
+
+        # ---------------- SAR ----------------
+        if sar is not None:
+            sar = (sar - sar.min()) / (sar.max() - sar.min() + 1e-6)
+            axes[row, 0].imshow(torch.clip(sar[0].cpu(), 0, 1), cmap="gray")
+            axes[row, 0].set_title("SAR")
+            axes[row, 0].axis("off")
+            for j in range(1, show_prisma):
+                axes[row, j].axis("off")
+            row += 1
+
+        # ---------------- PLANET ----------------
+        if planet is not None:
+            if planet.shape[0] >= 3:
+                rgb = planet[:3].permute(1, 2, 0).cpu()
+                rgb = (rgb - rgb.min()) / (rgb.max() - rgb.min() + 1e-6)
+                axes[row, 0].imshow(torch.clip(rgb, 0, 1))
+                axes[row, 0].set_title("Planet RGB")
+            else:
+                axes[row, 0].imshow(planet[0].cpu(), cmap="gray")
+                axes[row, 0].set_title("Planet band 0")
+            axes[row, 0].axis("off")
+            for j in range(1, show_prisma):
+                axes[row, j].axis("off")
+            row += 1
+
+        # ---------------- PRISMA ----------------
+        for i in range(show_prisma):
+            axes[row, i].imshow(prisma[i].cpu(), cmap="viridis")
+            axes[row, i].set_title(f"PRISMA {i}")
+            axes[row, i].axis("off")
+
+        title = "PRISMA PCA"
+        fig.suptitle(title, fontsize=16)
+        plt.tight_layout()
+        plt.show()
+
+    print("\n✔ Dataset test completed\n")
+
+
+if __name__ == "__main__":
+    main()

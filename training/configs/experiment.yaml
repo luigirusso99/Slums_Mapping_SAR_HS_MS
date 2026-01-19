@@ -20,9 +20,11 @@ data:
   metadata_csv: "dataset/metadata.csv"
   folds_csv: "dataset/folds.csv"
 
-  # Normalization statistics
-  normalization_stats_prisma_csv: "dataset/prisma_normalization_stats.csv"
+  # Normalization statistics (OPT + SAR only)
   normalization_stats_opt_sar_csv: "dataset/normalization_stats_opt_sar.csv"
+
+  # NOTE:
+  # PRISMA is used only via PCA embeddings (see prisma_pca below).
 
   augment: true
   normalize: true
@@ -32,19 +34,26 @@ data:
   planet_channels: 8
   prisma_channels: 230   # PRISMA hyperspectral bands (conditioning only)
 
+  # ===============================
+  # PRISMA PCA (ONLY supported PRISMA pathway)
+  # ===============================
+  prisma_pca:
+    enabled: true              # MUST be true if model.use_prisma = true
+    n_components: 16           # e.g. 8 / 16 / 32
+    weights_dir: "dataset/prisma_pca_weights/"
+
 # ===============================
 # MODEL SETTINGS
 # ===============================
 model:
   # Architecture choice
-  fusion_type: single     # single | early | mid | late
+  fusion_type: late    # single | early | mid | late
 
   # Used only if fusion_type: single
   sensor_type: planet        # sar | planet
 
   # PRISMA FiLM conditioning
-  use_prisma: true       # true | false
-
+  use_prisma: true      
   # Classification settings
   num_classes: 1
   dropout: 0.2
