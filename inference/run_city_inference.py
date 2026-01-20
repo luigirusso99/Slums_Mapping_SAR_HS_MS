@@ -116,7 +116,6 @@ def run_city_inference(cfg_path, valid_mask_tif=None):
             return_id=True,
             use_prisma=use_prisma,
             stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
-            prisma_pca_cfg=data_cfg.get("prisma_pca"),
         )
 
         dl = DataLoader(ds, batch_size=cfg["batch_size"], shuffle=False)

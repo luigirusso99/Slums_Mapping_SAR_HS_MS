@@ -29,18 +29,12 @@ data:
   augment: true
   normalize: true
 
-  # Input channels
+  # NOTE:
+  # PRISMA patches are assumed to be ALREADY reduced via PCA offline.
+  # The dataset loads PCA-reduced PRISMA patches directly (no PCA at runtime).
+  prisma_channels: 16   # PRISMA components extracted through PCA
   sar_channels: 1
   planet_channels: 8
-  prisma_channels: 16   # PRISMA components extracted through PCA
-
-  # ===============================
-  # PRISMA PCA (ONLY supported PRISMA pathway)
-  # ===============================
-  prisma_pca:
-    enabled: true          
-    n_components: 16           # e.g. 8 / 16 / 32
-    weights_dir: "dataset/prisma_pca_weights/"
 
 # ===============================
 # MODEL SETTINGS

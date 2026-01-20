@@ -39,7 +39,6 @@ def run_fold(fold_id, cfg_path):
 
     data_cfg = cfg["data"]
     model_cfg = cfg["model"]
-    prisma_pca_cfg = data_cfg.get("prisma_pca")
 
     # =====================
     # Dataset
@@ -61,7 +60,6 @@ def run_fold(fold_id, cfg_path):
         augment=data_cfg.get("augment", True),
         use_prisma=model_cfg.get("use_prisma", False),
         stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
-        prisma_pca_cfg=prisma_pca_cfg,
     )
 
     val_ds = SlumDataset(
@@ -74,7 +72,6 @@ def run_fold(fold_id, cfg_path):
         augment=False,
         use_prisma=model_cfg.get("use_prisma", False),
         stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
-        prisma_pca_cfg=prisma_pca_cfg,
     )
 
     train_loader = DataLoader(train_ds, batch_size=cfg["batch_size"], shuffle=True)

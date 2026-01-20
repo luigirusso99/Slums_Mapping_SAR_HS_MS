@@ -4,12 +4,14 @@ import torch, rasterio, pandas as pd, random, numpy as np
 from torch.utils.data import Dataset
 from training.dataset.utils.augmentations import GeoAugmentations
 from training.dataset.utils.normalization import ZScoreNormalizer
-import os, joblib
+import os
 
 class SlumDataset(Dataset):
     """
-    PRISMA is supported via PCA embeddings.
-    One PCA model is used per fold to avoid data leakage.
+    Dataset for Slum Mapping.
+
+    PRISMA patches are expected to be preprocessed offline and already
+    reduced via PCA. No PCA computation is performed at runtime.
     """
 
     def __init__(self, metadata_csv, folds_csv, folds_to_use,
@@ -17,8 +19,7 @@ class SlumDataset(Dataset):
                  sensor_type=None,
                  normalize=True, augment=True, return_id=False,
                  use_prisma=False,
-                 stats_opt_sar_csv="dataset/normalization_stats_opt_sar.csv",
-                 prisma_pca_cfg=None):
+                 stats_opt_sar_csv="dataset/normalization_stats_opt_sar.csv"):
         
         assert fusion_type in ("single", "early", "mid", "late")
         if fusion_type == "single":
@@ -51,18 +52,6 @@ class SlumDataset(Dataset):
         self.augment = augment
         self.return_id = return_id
         self.use_prisma = use_prisma
-
-        if self.use_prisma:
-            if prisma_pca_cfg is None or not prisma_pca_cfg.get("enabled", False):
-                raise RuntimeError(
-                    "use_prisma=True requires prisma_pca_cfg.enabled=True (PRISMA raw is no longer supported)"
-                )
-
-        if prisma_pca_cfg is not None and prisma_pca_cfg.get("enabled", False):
-            self.use_prisma_pca = True
-        else:
-            self.use_prisma_pca = False
-        self.prisma_pca_cfg = prisma_pca_cfg
 
         self.fold_ids = sorted(folds_to_use)
 
@@ -125,31 +114,11 @@ class SlumDataset(Dataset):
 
     def __getitem__(self, idx):
         row = self.df.iloc[idx]
-        fold = int(row["fold"])
-
         sar = self.load(row["sar_path"]) if self.mode in ("sar", "fusion") else None
         planet = self.load(row["planet_path"]) if self.mode in ("planet", "fusion") else None
         prisma = None
         if self.use_prisma:
             prisma = self.load_npz(row["prisma_path"])
-            C, H, W = prisma.shape
-            prisma_flat = prisma.view(C, -1).permute(1, 0).numpy()
-
-            pca_path = os.path.join(
-                self.prisma_pca_cfg["weights_dir"],
-                f"prisma_pca_fold{fold}.joblib"
-            )
-
-            if not hasattr(self, "_pca_cache"):
-                self._pca_cache = {}
-
-            if fold not in self._pca_cache:
-                self._pca_cache[fold] = joblib.load(pca_path)
-
-            pca = self._pca_cache[fold]
-            z = pca.transform(prisma_flat)
-            z = torch.from_numpy(z).float().permute(1, 0).view(-1, H, W)
-            prisma = z
 
         # Augmentations (SAR / Planet / PRISMA if present)
         if self.aug:
@@ -213,16 +182,10 @@ def main():
     data_cfg = cfg["data"]
     model_cfg = cfg["model"]
 
-    prisma_pca_cfg = data_cfg.get("prisma_pca")
-
     print("\n========== DATASET TEST ==========")
     print(f"Fusion type: {model_cfg['fusion_type']}")
     print(f"Sensor type: {model_cfg.get('sensor_type')}")
     print(f"Use PRISMA:  {model_cfg.get('use_prisma', False)}")
-    print(
-        f"Use PRISMA PCA: "
-        f"{prisma_pca_cfg is not None and prisma_pca_cfg.get('enabled', False)}"
-    )
 
     # --------------------------------------------------
     # Build dataset (single fold for testing)
@@ -238,7 +201,6 @@ def main():
         return_id=True,
         use_prisma=model_cfg.get("use_prisma", False),
         stats_opt_sar_csv=data_cfg["normalization_stats_opt_sar_csv"],
-        prisma_pca_cfg=prisma_pca_cfg,
     )
 
     print(f"Dataset size: {len(dataset)}")
