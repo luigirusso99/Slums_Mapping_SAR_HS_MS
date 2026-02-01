@@ -76,6 +76,7 @@ dataset/*.csv
 raw_data/
 data/
 downloads/
+utils_plots/
 
 # =========================
 # Credentials / tokens
